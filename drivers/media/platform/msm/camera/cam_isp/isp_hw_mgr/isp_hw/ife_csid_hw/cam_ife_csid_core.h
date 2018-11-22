@@ -360,6 +360,7 @@ struct cam_ife_csid_tpg_cfg  {
  * @dt:          Data type
  * @cnt:         Cid resource reference count.
  * @tpg_set:     Tpg used for this cid resource
+ * @pixel_count: Pixel resource connected
  *
  */
 struct cam_ife_csid_cid_data {
@@ -435,11 +436,6 @@ struct cam_ife_csid_path_cfg {
  * @csid_debug:               csid debug information to enable the SOT, EOT,
  *                            SOF, EOF, measure etc in the csid hw
  * @clk_rate                  Clock rate
- * @sof_irq_triggered:        Flag is set on receiving event to enable sof irq
- *                            incase of SOF freeze.
- * @irq_debug_cnt:            Counter to track sof irq's when above flag is set.
- * @error_irq_count           Error IRQ count, if continuous error irq comes
- *                            need to stop the CSID and mask interrupts.
  *
  */
 struct cam_ife_csid_hw {
@@ -461,9 +457,6 @@ struct cam_ife_csid_hw {
 	struct completion    csid_rdin_complete[CAM_IFE_CSID_RDI_MAX];
 	uint64_t                         csid_debug;
 	uint64_t                         clk_rate;
-	bool                             sof_irq_triggered;
-	uint32_t                         irq_debug_cnt;
-	uint32_t                         error_irq_count;
 };
 
 int cam_ife_csid_hw_probe_init(struct cam_hw_intf  *csid_hw_intf,

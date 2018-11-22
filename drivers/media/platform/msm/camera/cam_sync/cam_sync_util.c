@@ -1,4 +1,4 @@
-/* Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -48,13 +48,11 @@ int cam_sync_init_object(struct sync_table_row *table,
 	row->sync_id = idx;
 	row->state = CAM_SYNC_STATE_ACTIVE;
 	row->remaining = 0;
-	atomic_set(&row->ref_cnt, 0);
 	init_completion(&row->signaled);
 	INIT_LIST_HEAD(&row->callback_list);
 	INIT_LIST_HEAD(&row->user_payload_list);
-	CAM_DBG(CAM_SYNC,
-		"row name:%s sync_id:%i [idx:%u] row_state:%u ",
-		row->name, row->sync_id, idx, row->state);
+	CAM_DBG(CAM_SYNC, "Sync object Initialised: sync_id:%u row_state:%u ",
+		row->sync_id, row->state);
 
 	return 0;
 }
@@ -211,24 +209,14 @@ int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx)
 	if (!table || idx <= 0 || idx >= CAM_SYNC_MAX_OBJS)
 		return -EINVAL;
 
-	CAM_DBG(CAM_SYNC,
-		"row name:%s sync_id:%i [idx:%u] row_state:%u",
-		row->name, row->sync_id, idx, row->state);
-
 	spin_lock_bh(&sync_dev->row_spinlocks[idx]);
 	if (row->state == CAM_SYNC_STATE_INVALID) {
-		spin_unlock_bh(&sync_dev->row_spinlocks[idx]);
 		CAM_ERR(CAM_SYNC,
 			"Error: accessing an uninitialized sync obj: idx = %d",
 			idx);
+		spin_unlock_bh(&sync_dev->row_spinlocks[idx]);
 		return -EINVAL;
 	}
-
-	if (row->state == CAM_SYNC_STATE_ACTIVE)
-		CAM_WARN(CAM_SYNC,
-			"Destroying an active sync object name:%s id:%i",
-			row->name, row->sync_id);
-
 	row->state = CAM_SYNC_STATE_INVALID;
 
 	/* Object's child and parent objects will be added into this list */
@@ -264,23 +252,19 @@ int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx)
 		spin_lock_bh(&sync_dev->row_spinlocks[child_info->sync_id]);
 
 		if (child_row->state == CAM_SYNC_STATE_INVALID) {
-			list_del_init(&child_info->list);
 			spin_unlock_bh(&sync_dev->row_spinlocks[
 				child_info->sync_id]);
+			list_del_init(&child_info->list);
 			kfree(child_info);
 			continue;
 		}
 
-		if (child_row->state == CAM_SYNC_STATE_ACTIVE)
-			CAM_WARN(CAM_SYNC,
-				"Warning: destroying active child sync obj = %d",
-				child_info->sync_id);
-
 		cam_sync_util_cleanup_parents_list(child_row,
 			SYNC_LIST_CLEAN_ONE, idx);
 
-		list_del_init(&child_info->list);
 		spin_unlock_bh(&sync_dev->row_spinlocks[child_info->sync_id]);
+
+		list_del_init(&child_info->list);
 		kfree(child_info);
 	}
 
@@ -293,23 +277,19 @@ int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx)
 		spin_lock_bh(&sync_dev->row_spinlocks[parent_info->sync_id]);
 
 		if (parent_row->state == CAM_SYNC_STATE_INVALID) {
-			list_del_init(&parent_info->list);
 			spin_unlock_bh(&sync_dev->row_spinlocks[
 				parent_info->sync_id]);
+			list_del_init(&parent_info->list);
 			kfree(parent_info);
 			continue;
 		}
 
-		if (parent_row->state == CAM_SYNC_STATE_ACTIVE)
-			CAM_WARN(CAM_SYNC,
-				"Warning: destroying active parent sync obj = %d",
-				parent_info->sync_id);
-
 		cam_sync_util_cleanup_children_list(parent_row,
 			SYNC_LIST_CLEAN_ONE, idx);
 
-		list_del_init(&parent_info->list);
 		spin_unlock_bh(&sync_dev->row_spinlocks[parent_info->sync_id]);
+
+		list_del_init(&parent_info->list);
 		kfree(parent_info);
 	}
 
@@ -349,64 +329,6 @@ void cam_sync_util_cb_dispatch(struct work_struct *cb_dispatch_work)
 		cb_info->cb_data);
 
 	kfree(cb_info);
-}
-
-void cam_sync_util_dispatch_signaled_cb(int32_t sync_obj,
-	uint32_t status)
-{
-	struct sync_callback_info  *sync_cb;
-	struct sync_user_payload   *payload_info;
-	struct sync_callback_info  *temp_sync_cb;
-	struct sync_table_row      *signalable_row;
-	struct sync_user_payload   *temp_payload_info;
-
-	signalable_row = sync_dev->sync_table + sync_obj;
-	if (signalable_row->state == CAM_SYNC_STATE_INVALID) {
-		CAM_DBG(CAM_SYNC,
-			"Accessing invalid sync object:%i", sync_obj);
-		return;
-	}
-
-	/* Dispatch kernel callbacks if any were registered earlier */
-	list_for_each_entry_safe(sync_cb,
-		temp_sync_cb, &signalable_row->callback_list, list) {
-		sync_cb->status = status;
-		list_del_init(&sync_cb->list);
-		queue_work(sync_dev->work_queue,
-			&sync_cb->cb_dispatch_work);
-	}
-
-	/* Dispatch user payloads if any were registered earlier */
-	list_for_each_entry_safe(payload_info, temp_payload_info,
-		&signalable_row->user_payload_list, list) {
-		spin_lock_bh(&sync_dev->cam_sync_eventq_lock);
-		if (!sync_dev->cam_sync_eventq) {
-			spin_unlock_bh(
-				&sync_dev->cam_sync_eventq_lock);
-			break;
-		}
-		spin_unlock_bh(&sync_dev->cam_sync_eventq_lock);
-		cam_sync_util_send_v4l2_event(
-			CAM_SYNC_V4L_EVENT_ID_CB_TRIG,
-			sync_obj,
-			status,
-			payload_info->payload_data,
-			CAM_SYNC_PAYLOAD_WORDS * sizeof(__u64));
-
-		list_del_init(&payload_info->list);
-		/*
-		 * We can free the list node here because
-		 * sending V4L event will make a deep copy
-		 * anyway
-		 */
-		 kfree(payload_info);
-	}
-
-	/*
-	 * This needs to be done because we want to unblock anyone
-	 * who might be blocked and waiting on this sync object
-	 */
-	complete_all(&signalable_row->signaled);
 }
 
 void cam_sync_util_send_v4l2_event(uint32_t id,

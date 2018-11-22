@@ -88,17 +88,6 @@ int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx);
 void cam_sync_util_cb_dispatch(struct work_struct *cb_dispatch_work);
 
 /**
- * @brief: Function to dispatch callbacks for a signaled sync object
- *
- * @sync_obj : Sync object that is signaled
- * @status   : Status of the signaled object
- *
- * @return None
- */
-void cam_sync_util_dispatch_signaled_cb(int32_t sync_obj,
-	uint32_t status);
-
-/**
  * @brief: Function to send V4L event to user space
  * @param id       : V4L event id to send
  * @param sync_obj : Sync obj for which event needs to be sent
